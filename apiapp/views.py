@@ -16,7 +16,7 @@ from sklearn.preprocessing import OneHotEncoder
 from fuzzywuzzy import fuzz, process 
 
 def index(request):
-    return HttpResponse("Hello")
+    return HttpResponse("Hello World")
 
 # Load the saved model
 model_filename = os.path.join(os.path.dirname(__file__), 'xgb_model.pkl')
