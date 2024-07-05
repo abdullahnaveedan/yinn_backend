@@ -9,58 +9,49 @@ from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import EmissionInputSerializer
-import numpy as np
+from .serializers import *
 import pickle
 from sklearn.preprocessing import OneHotEncoder
-from fuzzywuzzy import fuzz, process 
+from fuzzywuzzy import fuzz, process
+from xgboost import XGBRegressor
+
 
 def index(request):
     return HttpResponse("Hello World")
 
+# Load the dataset
+dataset_path = os.path.join(settings.BASE_DIR, 'static', 'merged_data.xlsx')
+df = pd.read_excel(dataset_path)
+
 # Load the saved model
-model_filename = os.path.join(os.path.dirname(__file__), 'xgb_model.pkl')
-with open(model_filename, 'rb') as file:
+model_path = os.path.join(os.path.dirname(__file__), 'xgb_model.pkl')
+with open(model_path, 'rb') as file:
     model = pickle.load(file)
 
-# Function to load dataset from an Excel file
-def load_dataset(filename):
-    df = pd.read_excel(filename)
-    return df
+# Fit a new encoder on the 'Material' column
+encoder = OneHotEncoder()
+encoder.fit(df[['Material']])
 
-# Function to find closest match for an item name
-def find_closest_item(item_name, dataset):
-    choices = dataset['item'].tolist()
-    closest_match, score = process.extractOne(item_name, choices, scorer=fuzz.token_sort_ratio)
+# Function to find the closest match for the item name using fuzzywuzzy
+def find_closest_match(item_name, df):
+    items = df['item'].tolist()
+    closest_match, _ = process.extractOne(item_name, items)
     return closest_match
 
-# Function to calculate weighted CO2
-def calculate_weighted_co2(material_percentages, material_df):
-    total_co2 = 0
-    for material, percentage in material_percentages.items():
-        # Fetch CO2 value for the material
-        co2_value = material_df.loc[material_df['Material'] == material, 'CO2/kg']
-        if not co2_value.empty:
-            total_co2 += (co2_value.values[0] * (percentage / 100))
-        else:
-            # Handle the case where material is not found, maybe by setting a default CO2 value
-            print(f"Warning: Material {material} not found in CO2 emissions data. Using 0 CO2/kg.")
-            total_co2 += 0  # Or any default value you deem appropriate
-    return total_co2
-
-# Function to predict CO2 emission
-def predict_co2_emission(item, material_percentages, dataset):
-    # Find closest item match
-    matched_item = find_closest_item(item, dataset)
-    print(matched_item)
-    if not matched_item:
-        raise ValueError(f"No close match found for item '{item}' in the dataset.")
+# Function to predict CO2/kg based on materials and percentages
+def predict_co2(materials, model, encoder):
+    total_percentage = sum(materials.values())
+    if total_percentage != 100:
+        raise ValueError("Total percentage of materials must equal 100%")
     
-    # Calculate weighted CO2 based on user-entered percentages
-    # Use the full dataset for material lookup instead of filtering by matched item
-    material_df = dataset[['Material', 'CO2/kg']]  
-    weighted_co2 = calculate_weighted_co2(material_percentages, material_df)
+    co2_values = []
+    for material, percentage in materials.items():
+        material_df = pd.DataFrame({'Material': [material]})
+        material_encoded = encoder.transform(material_df)
+        co2_value = model.predict(material_encoded)[0]
+        co2_values.append(co2_value * (percentage / 100))
     
+    weighted_co2 = sum(co2_values)
     return weighted_co2
 
 class PredictEmissionView(APIView):
@@ -69,16 +60,17 @@ class PredictEmissionView(APIView):
         if serializer.is_valid():
             user_item = serializer.validated_data['product_name']
             materials_data = serializer.validated_data['materials']
-            print(user_item)
+            
             # Load dataset
-            dataset = os.path.join(settings.BASE_DIR, 'static', 'merged_data.xlsx')
-            df = load_dataset(dataset)
+            df = pd.read_excel(dataset_path)
             
             user_materials = {material['material']: material['percentage'] for material in materials_data}
             
-            # Predict the CO2 emission based on user input
-            predicted_co2 = predict_co2_emission(user_item, user_materials, df)
-            
-            return Response({'predicted_emission_co2e': predicted_co2}, status=status.HTTP_200_OK)
+            try:
+                # Predict the CO2 emission based on user input
+                predicted_co2 = predict_co2(user_materials, model, encoder)
+                return Response({'predicted_emission_co2e': predicted_co2}, status=status.HTTP_200_OK)
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
