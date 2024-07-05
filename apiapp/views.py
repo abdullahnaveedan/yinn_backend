@@ -17,7 +17,7 @@ from xgboost import XGBRegressor
 
 
 def index(request):
-    return HttpResponse("Hello World")
+    return HttpResponse("Testing!")
 
 # Load the dataset
 dataset_path = os.path.join(settings.BASE_DIR, 'static', 'merged_data.xlsx')
