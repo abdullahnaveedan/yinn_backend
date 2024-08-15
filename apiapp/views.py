@@ -14,7 +14,7 @@ import pickle
 from sklearn.preprocessing import OneHotEncoder
 from fuzzywuzzy import fuzz, process
 from xgboost import XGBRegressor
-
+import difflib
 
 def index(request):
     return HttpResponse("Testing!")
@@ -74,3 +74,68 @@ class PredictEmissionView(APIView):
                 return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# Data mapping
+PRODUCT_DATA = {
+    "Ebook": {
+        "Textbooks": "0.3 kg",
+        "Novels": "0.4 kg",
+        "Magazines": "0.3 kg"
+    },
+    "Music": {
+        "Streaming (e.g., Spotify, Apple Music)": "0.17 kg",
+        "Downloaded Files (e.g., MP3, FLAC)": "0.03 kg",
+        "CDs": "1.6 kg"
+    },
+    "Movies": {
+        "Streaming (e.g., Netflix, Amazon Prime per hour)": "0.9 kg",
+        "Blu-ray Discs": "1.6 kg",
+        "DVDs": "1.2 kg"
+    },
+    "Games": {
+        "Digital Downloads (PC, Console)": "0.16 kg",
+        "Physical Discs (Blu-ray, DVD)": "1.6 kg",
+        "Streaming (Cloud Gaming per hour play)": "1.7 kg"
+    },
+    "TV Serial": {
+        "Streaming (e.g., Netflix, Hulu)": "0.7 kg",
+        "Physical Discs (DVD, Blu-ray)": "1.6 kg",
+        "Downloaded Episodes(per episode)": "0.1 kg"
+    },
+    "App Software": {
+        "Mobile Apps": "0.1 kg",
+        "Desktop Software": "0.3 kg",
+        "Web Applications(per minute use)": "0.07 kg"
+    },
+    "Stage Art": {
+        "Live Performances (Theater, Dance)": "25 kg",
+        "Recorded Performances (Digital streaming, DVDs)": "0.9 kg"
+    }
+}
+
+class DigitalProductAPIView(APIView):
+    def post(self, request):
+        try:
+            serializer = DigitalProductSerializer(data=request.data)
+            if serializer.is_valid():
+                category = serializer.validated_data['product_category']
+                product_type = serializer.validated_data['product_type']
+
+                available_types = PRODUCT_DATA.get(category, {}).keys()
+
+                # Find the best match for the product_type entered by the user
+                closest_match = difflib.get_close_matches(product_type, available_types, n=1, cutoff=0.6)
+
+                if closest_match:
+                    matched_type = closest_match[0]
+                    value = PRODUCT_DATA[category][matched_type]
+                    return Response({"message" : "Success", "payload": value} , status=status.HTTP_200_OK)
+                else:
+                    return Response({"message": "Type not found", "payload" : "0"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(serializer.errors, status=status.HTTP_404_NOT_FOUND)
+        
+        except KeyError as e:
+            return Response({"error": f"KeyError: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        except Exception as e:
+            return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
